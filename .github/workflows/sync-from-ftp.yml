@@ -90,10 +90,56 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
+          git config http.postBuffer 524288000
+          git config http.version HTTP/1.1
+
+          push_with_retry() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              if git push origin HEAD; then
+                return 0
+              fi
+              echo "push attempt ${attempt} failed, retrying..."
+              sleep $((attempt * 15))
+            done
+            return 1
+          }
+
+          commit_path() {
+            local path="$1"
+            git add -- "$path"
+            if git diff --cached --quiet; then
+              return 0
+            fi
+            git commit -m "Sync ${path} from FTP server."
+            push_with_retry
+          }
+
+          shopt -s dotglob nullglob
+          paths=(*)
+          committed=0
+          if [ ${#paths[@]} -eq 0 ]; then
             echo "No site files downloaded from FTP."
             exit 1
           fi
-          git commit -m "Sync site files from FTP server."
-          git push
+          for path in "${paths[@]}"; do
+            if [ "$path" = ".git" ] || [ "$path" = ".github" ]; then
+              continue
+            fi
+            if [ -d "$path" ]; then
+              children=("$path"/*)
+              if [ ${#children[@]} -gt 0 ]; then
+                for child in "${children[@]}"; do
+                  commit_path "$child"
+                  committed=1
+                done
+                continue
+              fi
+            fi
+            commit_path "$path"
+            committed=1
+          done
+          if [ "$committed" -eq 0 ]; then
+            echo "No site files downloaded from FTP."
+            exit 1
+          fi

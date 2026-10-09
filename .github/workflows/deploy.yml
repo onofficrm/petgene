@@ -9,6 +9,10 @@ on:
       - ".github/**"
       - ".gitignore"
 
+concurrency:
+  group: ftp-deploy
+  cancel-in-progress: true
+
 jobs:
   ftp-deploy:
     runs-on: ubuntu-latest
