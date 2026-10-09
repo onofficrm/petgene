@@ -81,6 +81,15 @@ jobs:
             --exclude-glob .gitignore \
             --exclude-glob node_modules/ \
             --exclude-glob .DS_Store \
+            --exclude-glob backup/ \
+            --exclude-glob backup/* \
+            --exclude-glob '*.sql' \
+            --exclude-glob '*.sql.gz' \
+            --exclude-glob '*.tar' \
+            --exclude-glob '*.tar.gz' \
+            --exclude-glob '*.tgz' \
+            --exclude-glob '*.zip' \
+            --exclude-glob '*.7z' \
             . .
           bye
           EOF
@@ -107,13 +116,33 @@ jobs:
 
           commit_path() {
             local path="$1"
+            if [ ! -e "$path" ]; then
+              return 0
+            fi
             git add -- "$path"
+            while IFS= read -r -d '' big; do
+              echo "skip large file: $big"
+              git reset -q HEAD -- "$big" || true
+              rm -f -- "$big"
+            done < <(find "$path" -type f -size +90M -print0)
             if git diff --cached --quiet; then
               return 0
             fi
             git commit -m "Sync ${path} from FTP server."
-            push_with_retry
+            if ! push_with_retry; then
+              echo "push failed for $path; dropping that commit and continuing"
+              git reset --hard HEAD~1
+            fi
           }
+
+          if [ -n "$(git ls-files 'backup' '*.sql' '*.sql.gz' '*.tar' '*.tar.gz' '*.tgz' '*.zip' '*.7z')" ]; then
+            git rm -r --ignore-unmatch -- backup
+            git ls-files -z '*.sql' '*.sql.gz' '*.tar' '*.tar.gz' '*.tgz' '*.zip' '*.7z' | xargs -0 -r git rm -f --ignore-unmatch --
+            if ! git diff --cached --quiet; then
+              git commit -m "Remove hosting backup archives from the repository."
+              push_with_retry
+            fi
+          fi
 
           shopt -s dotglob nullglob
           paths=(*)
