@@ -1,174 +1,100 @@
-name: Sync from FTP
+name: Sync site from FTP
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
     paths:
-      - ".github/workflows/sync-from-ftp.yml"
+      - .github/workflows/sync-from-ftp.yml
 
 permissions:
   contents: write
 
+concurrency:
+  group: sync-from-ftp
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: Install lftp
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y lftp
-
-      - name: Download site from FTP
+      - name: Mirror the live site from FTP
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_PORT: ${{ secrets.FTP_PORT }}
           FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
           FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
-          FTP_PORT: ${{ secrets.FTP_PORT }}
         run: |
           set -euo pipefail
-          FTP_PORT="${FTP_PORT:-21}"
-          FTP_SERVER="${FTP_SERVER#ftp://}"
-          FTP_SERVER="${FTP_SERVER#ftps://}"
-          FTP_SERVER="${FTP_SERVER#sftp://}"
-          FTP_SERVER="${FTP_SERVER%/}"
-
-          LIST=$(lftp -u "$FTP_USERNAME","$FTP_PASSWORD" -p "$FTP_PORT" "$FTP_SERVER" <<'EOF'
-          set ftp:passive-mode true
-          set ssl:verify-certificate no
-          set sftp:auto-confirm yes
-          set net:max-retries 3
-          set net:timeout 30
-          set cmd:fail-exit yes
-          cls -1
-          bye
-          EOF
-          )
-
-          echo "FTP root listing:"
-          echo "$LIST"
-
-          REMOTE_DIR="."
-          if echo "$LIST" | grep -qx "public_html"; then
-            REMOTE_DIR="public_html"
-          elif echo "$LIST" | grep -qx "www"; then
-            REMOTE_DIR="www"
-          elif echo "$LIST" | grep -qx "httpdocs"; then
-            REMOTE_DIR="httpdocs"
+          missing=0
+          for name in FTP_SERVER FTP_USERNAME FTP_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing repository secret ${name}"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
           fi
-          echo "Using remote directory: $REMOTE_DIR"
+          echo "::notice::FTP secrets are present."
+          sudo apt-get update
+          sudo apt-get install -y lftp
+          echo 'aW1wb3J0IG9zCmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aAoKcmF3ID0gb3MuZW52aXJvblsiRlRQX1NFUlZFUiJdLnN0cmlwKCkKbG93ZXIgPSByYXcubG93ZXIoKQpmb3IgcHJlZml4IGluICgiZnRwOi8vIiwgImZ0cHM6Ly8iKToKICAgIGlmIGxvd2VyLnN0YXJ0c3dpdGgocHJlZml4KToKICAgICAgICByYXcgPSByYXdbbGVuKHByZWZpeCk6XQogICAgICAgIGxvd2VyID0gcmF3Lmxvd2VyKCkKcmF3ID0gcmF3LnNwbGl0KCIvIilbMF0KcG9ydCA9IChvcy5lbnZpcm9uLmdldCgiRlRQX1BPUlQiKSBvciAiIikuc3RyaXAoKQppZiAiOiIgaW4gcmF3IGFuZCBub3QgcmF3LnN0YXJ0c3dpdGgoIlsiKToKICAgIHJhdywgZW1iZWRkZWQgPSByYXcucnNwbGl0KCI6IiwgMSkKICAgIGlmIG5vdCBwb3J0OgogICAgICAgIHBvcnQgPSBlbWJlZGRlZAppZiBub3QgcG9ydDoKICAgIHBvcnQgPSAiMjEiCgp1c2VyID0gb3MuZW52aXJvblsiRlRQX1VTRVJOQU1FIl0KcGFzc3dvcmQgPSBvcy5lbnZpcm9uWyJGVFBfUEFTU1dPUkQiXQpuZXRyYyA9IFBhdGguaG9tZSgpIC8gIi5uZXRyYyIKbmV0cmMud3JpdGVfdGV4dCgibWFjaGluZSAlc1xubG9naW4gJXNcbnBhc3N3b3JkICVzXG4iICUgKHJhdywgdXNlciwgcGFzc3dvcmQpLCBlbmNvZGluZz0idXRmLTgiKQpuZXRyYy5jaG1vZCgwbzYwMCkKCmRlZiBzY3JpcHQoc3NsKToKICAgIHJldHVybiAiXG4iLmpvaW4oWwogICAgICAgICJzZXQgY21kOmZhaWwtZXhpdCB5ZXMiLAogICAgICAgICJzZXQgbmV0OnRpbWVvdXQgMzAiLAogICAgICAgICJzZXQgbmV0Om1heC1yZXRyaWVzIDIiLAogICAgICAgICJzZXQgbmV0OnJlY29ubmVjdC1pbnRlcnZhbC1iYXNlIDUiLAogICAgICAgICJzZXQgZnRwOnBhc3NpdmUtbW9kZSB0cnVlIiwKICAgICAgICAic2V0IHNzbDp2ZXJpZnktY2VydGlmaWNhdGUgbm8iLAogICAgICAgICJzZXQgZnRwOnNzbC1hbGxvdyAlcyIgJSBzc2wsCiAgICAgICAgInNldCBmdHA6Y2hhcnNldCB1dGYtOCIsCiAgICAgICAgInNldCBmaWxlOmNoYXJzZXQgdXRmLTgiLAogICAgICAgICJvcGVuIC1wICVzICVzIiAlIChwb3J0LCByYXcpLAogICAgICAgICJzZXQgY21kOmZhaWwtZXhpdCBubyIsCiAgICAgICAgIm1pcnJvciAtLWNvbnRpbnVlIC0tbm8tcGVybXMgLS1wYXJhbGxlbD0zIC14ICcoXnwvKWRhdGEvJyAteCAnKF58LylcXC5naXQvJyAteCAnKF58LylcXC5naXRodWIvJyAteCAnXFwuc3FsJCcgLXggJyhefC8pXFwuZW52JCcgLXggJyhefC8pXFwuZW52XFwuJyAteCAnZGJjb25maWdcXC5waHAkJyAuIC4iLAogICAgICAgICJieWUiLAogICAgICAgICIiLAogICAgXSkKClBhdGgoIi90bXAvbWlycm9yLWZ0cHMubGZ0cCIpLndyaXRlX3RleHQoc2NyaXB0KCJ5ZXMiKSwgZW5jb2Rpbmc9InV0Zi04IikKUGF0aCgiL3RtcC9taXJyb3ItZnRwLmxmdHAiKS53cml0ZV90ZXh0KHNjcmlwdCgibm8iKSwgZW5jb2Rpbmc9InV0Zi04IikKcHJpbnQoInByZXBhcmVkIik=' | base64 -d > /tmp/prep.py
+          python3 /tmp/prep.py
+          echo "::notice::Starting FTP download."
+          if ! lftp -f /tmp/mirror-ftps.lftp > /tmp/lftp-ftps.log 2>&1; then
+            echo "::warning::FTPS connection failed. Retrying plain FTP."
+            if ! lftp -f /tmp/mirror-ftp.lftp > /tmp/lftp-ftp.log 2>&1; then
+              if grep -Eqi 'login failed|login incorrect|530 ' /tmp/lftp-ftp.log /tmp/lftp-ftps.log; then
+                echo "::error::FTP login was rejected. Check FTP_USERNAME and FTP_PASSWORD."
+              elif grep -Eqi 'name or service|temporary failure|no route|connection refused|not connected' /tmp/lftp-ftp.log /tmp/lftp-ftps.log; then
+                echo "::error::Could not reach the FTP server. Check FTP_SERVER and FTP_PORT."
+              else
+                echo "::error::FTP download failed."
+              fi
+              exit 1
+            fi
+          fi
+          if [ -f public_html/index.php ] && [ ! -f index.php ]; then
+            shopt -s dotglob
+            mv public_html/* .
+            rmdir public_html || true
+          elif [ -f www/index.php ] && [ ! -f index.php ]; then
+            shopt -s dotglob
+            mv www/* .
+            rmdir www || true
+          fi
+          rm -rf data
+          find . -type f \( -name 'dbconfig.php' -o -name '*.sql' -o -name '.env' -o -name '.env.*' \) ! -path './.git/*' -delete
+          find . -type f -size +90M ! -path './.git/*' -delete
+          if [ ! -f index.php ]; then
+            dirs="$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.git' -printf '%f ')"
+            echo "::error::Downloaded files, but index.php was not in the FTP login directory. Top folders: ${dirs}"
+            exit 1
+          fi
+          count="$(find . -type f ! -path './.git/*' | wc -l)"
+          echo "::notice::Site root found. File count: ${count}"
 
-          lftp -u "$FTP_USERNAME","$FTP_PASSWORD" -p "$FTP_PORT" "$FTP_SERVER" <<EOF
-          set ftp:passive-mode true
-          set ssl:verify-certificate no
-          set sftp:auto-confirm yes
-          set net:max-retries 3
-          set net:timeout 30
-          set xfer:clobber true
-          set cmd:fail-exit yes
-          cd $REMOTE_DIR
-          pwd
-          mirror --verbose --parallel=4 \
-            --exclude-glob .git/ \
-            --exclude-glob .github/ \
-            --exclude-glob .gitignore \
-            --exclude-glob node_modules/ \
-            --exclude-glob .DS_Store \
-            --exclude-glob backup/ \
-            --exclude-glob backup/* \
-            --exclude-glob '*.sql' \
-            --exclude-glob '*.sql.gz' \
-            --exclude-glob '*.tar' \
-            --exclude-glob '*.tar.gz' \
-            --exclude-glob '*.tgz' \
-            --exclude-glob '*.zip' \
-            --exclude-glob '*.7z' \
-            . .
-          bye
-          EOF
-
-      - name: Commit and push downloaded files
+      - name: Commit the synced site
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config http.postBuffer 524288000
           git config http.version HTTP/1.1
-
-          push_with_retry() {
-            local attempt
-            for attempt in 1 2 3 4 5; do
-              if git push origin HEAD; then
-                return 0
-              fi
-              echo "push attempt ${attempt} failed, retrying..."
-              sleep $((attempt * 15))
-            done
-            return 1
-          }
-
-          commit_path() {
-            local path="$1"
-            if [ ! -e "$path" ]; then
-              return 0
-            fi
-            git add -- "$path"
-            while IFS= read -r -d '' big; do
-              echo "skip large file: $big"
-              git reset -q HEAD -- "$big" || true
-              rm -f -- "$big"
-            done < <(find "$path" -type f -size +90M -print0)
-            if git diff --cached --quiet; then
-              return 0
-            fi
-            git commit -m "Sync ${path} from FTP server."
-            if ! push_with_retry; then
-              echo "push failed for $path; dropping that commit and continuing"
-              git reset --hard HEAD~1
-            fi
-          }
-
-          if [ -n "$(git ls-files 'backup' '*.sql' '*.sql.gz' '*.tar' '*.tar.gz' '*.tgz' '*.zip' '*.7z')" ]; then
-            git rm -r --ignore-unmatch -- backup
-            git ls-files -z '*.sql' '*.sql.gz' '*.tar' '*.tar.gz' '*.tgz' '*.zip' '*.7z' | xargs -0 -r git rm -f --ignore-unmatch --
-            if ! git diff --cached --quiet; then
-              git commit -m "Remove hosting backup archives from the repository."
-              push_with_retry
-            fi
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::notice::No file changes to commit."
+            exit 0
           fi
-
-          shopt -s dotglob nullglob
-          paths=(*)
-          committed=0
-          if [ ${#paths[@]} -eq 0 ]; then
-            echo "No site files downloaded from FTP."
-            exit 1
-          fi
-          for path in "${paths[@]}"; do
-            if [ "$path" = ".git" ] || [ "$path" = ".github" ]; then
-              continue
+          git commit -m "Sync the live site from FTP."
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD; then
+              exit 0
             fi
-            if [ -d "$path" ]; then
-              children=("$path"/*)
-              if [ ${#children[@]} -gt 0 ]; then
-                for child in "${children[@]}"; do
-                  commit_path "$child"
-                  committed=1
-                done
-                continue
-              fi
-            fi
-            commit_path "$path"
-            committed=1
+            echo "push attempt ${attempt} failed, retrying..."
+            sleep $((attempt * 15))
           done
-          if [ "$committed" -eq 0 ]; then
-            echo "No site files downloaded from FTP."
-            exit 1
-          fi
+          exit 1
